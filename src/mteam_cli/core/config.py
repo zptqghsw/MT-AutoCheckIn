@@ -43,11 +43,34 @@ def _env_secret(name: str) -> str | None:
     """读密钥 env 覆盖；空/未设 → None（「空即不设」：空串不算覆盖）。
 
     有意对所有密钥（含 password）统一 strip：env 注入的首尾空白几乎总是误加
-    （k8s Secret/CI 变量常带换行），裁掉更安全。这与旧 env 方案「password 不
-    strip」不同——刻意统一，password 也不例外。
+    （k8s Secret/CI 变量常带换行），裁掉更安全。
     """
     raw = os.getenv(name)
     return raw.strip() if raw and raw.strip() else None
+
+
+def _env_int(name: str, default: int) -> int:
+    """整数 env 覆盖；空/未设 → default。"""
+    raw = os.getenv(name)
+    if not raw or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError as exc:
+        raise SystemExit(f"环境变量 {name} 需要整数（收到 {raw!r}）。") from exc
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """布尔 env 覆盖（true/1/yes/on，false/0/no/off）；空/未设 → default。"""
+    raw = os.getenv(name)
+    if not raw or not raw.strip():
+        return default
+    val = raw.strip().lower()
+    if val in {"1", "true", "yes", "on"}:
+        return True
+    if val in {"0", "false", "no", "off"}:
+        return False
+    raise SystemExit(f"环境变量 {name} 需要布尔值 true/false（收到 {raw!r}）。")
 
 
 @dataclass(slots=True, frozen=True)
@@ -203,20 +226,29 @@ class Settings:
             log_dir=ROOT_DIR / str(site.get("log_dir", "data/logs")),
             artifact_dir=ROOT_DIR / str(site.get("artifact_dir", "data/artifacts")),
             accounts=cls._parse_accounts_toml(data.get("account", [])),
-            smtp_host=str(smtp.get("host", "")).strip(),
-            smtp_port=int(smtp.get("port", 465)),
-            smtp_user=str(smtp.get("user", "")).strip(),
+            # SMTP 服务器：env（部署清单沿用 NOTIFY_SMTP_* 命名）优先，TOML 兜底。
+            smtp_host=_env_secret("NOTIFY_SMTP_HOST") or str(smtp.get("host", "")).strip(),
+            smtp_port=_env_int("NOTIFY_SMTP_PORT", int(smtp.get("port", 465))),
+            smtp_user=_env_secret("NOTIFY_SMTP_USER") or str(smtp.get("user", "")).strip(),
             smtp_password=_env_secret("NOTIFY_SMTP_PASSWORD") or str(smtp.get("password", "")),
-            smtp_from=str(smtp.get("from", "")).strip(),
-            smtp_use_tls=bool(smtp.get("use_tls", True)),
+            smtp_from=_env_secret("NOTIFY_SMTP_FROM") or str(smtp.get("from", "")).strip(),
+            smtp_use_tls=_env_bool("NOTIFY_SMTP_USE_TLS", bool(smtp.get("use_tls", True))),
             digest_min_imdb=float(digest.get("min_imdb", 8.0)),
             digest_types=list(digest.get("types", ["movie", "tvshow"])),
             digest_hours=int(digest.get("hours", 24)),
             digest_limit=int(digest.get("limit", 10)),
             digest_min_seeders=int(digest.get("min_seeders", 30)),
-            schedule_window=str(schedule.get("window", "09:00-11:00")).strip(),
-            schedule_pre_delay_range=str(schedule.get("pre_delay_range", "10-300")).strip(),
-            schedule_heartbeat_hours=int(schedule.get("heartbeat_hours", 1)),
+            schedule_window=(
+                _env_secret("MTEAM_SCHEDULE_WINDOW")
+                or str(schedule.get("window", "09:00-11:00")).strip()
+            ),
+            schedule_pre_delay_range=(
+                _env_secret("MTEAM_SCHEDULE_PRE_DELAY_RANGE")
+                or str(schedule.get("pre_delay_range", "10-300")).strip()
+            ),
+            schedule_heartbeat_hours=_env_int(
+                "MTEAM_SCHEDULE_HEARTBEAT_HOURS", int(schedule.get("heartbeat_hours", 1))
+            ),
         )
 
     @staticmethod
@@ -227,6 +259,9 @@ class Settings:
         ``i`` = 数组中的 1-based 序号。env 优先于 TOML 值；env 空/未设则用 TOML。
         ``username`` 同样支持 ``MTEAM_USERNAME_i`` 覆盖（部署清单沿用旧 env 命名时，
         TOML 里的占位账号名会被 env 修正）。
+        通知字段亦支持 env 覆盖：``NOTIFY_SMTP_TO_i`` / ``NOTIFY_TELEGRAM_TOKEN_i`` /
+        ``NOTIFY_TELEGRAM_CHAT_ID_i`` / ``NOTIFY_FEISHU_TOKEN_i``（全局 SMTP 服务器
+        与 NOTIFY_SMTP_PASSWORD 在 from_toml 里处理）。
         """
         # 结构校验：把常见手误（写成 [account] 单表而非 [[account]] 数组、漏 username）
         # 变成清晰文案，而非裸 KeyError/AttributeError。
@@ -253,10 +288,10 @@ class Settings:
                     password=_env_secret(f"MTEAM_PASSWORD_{i}") or (a.get("password") or None),
                     totp_secret=_env_secret(f"MTEAM_TOTP_SECRET_{i}") or (a.get("totp_secret") or None),
                     api_key=_env_secret(f"MTEAM_API_KEY_{i}") or (a.get("api_key") or None),
-                    telegram_token=notify.get("telegram_token") or None,
-                    telegram_chat_id=notify.get("telegram_chat_id") or None,
-                    feishu_token=notify.get("feishu_token") or None,
-                    smtp_to=notify.get("smtp_to") or None,
+                    telegram_token=_env_secret(f"NOTIFY_TELEGRAM_TOKEN_{i}") or (notify.get("telegram_token") or None),
+                    telegram_chat_id=_env_secret(f"NOTIFY_TELEGRAM_CHAT_ID_{i}") or (notify.get("telegram_chat_id") or None),
+                    feishu_token=_env_secret(f"NOTIFY_FEISHU_TOKEN_{i}") or (notify.get("feishu_token") or None),
+                    smtp_to=_env_secret(f"NOTIFY_SMTP_TO_{i}") or (notify.get("smtp_to") or None),
                     digest_enabled=bool(a.get("digest_enabled", False)),
                     # 原生类型，无需 split / 转换；缺键 → None（继承全局，合并在 resolved_digest_config）
                     digest_types=adigest.get("types"),

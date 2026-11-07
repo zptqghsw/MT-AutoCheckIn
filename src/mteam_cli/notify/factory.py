@@ -52,5 +52,10 @@ def build_notifier_hub(
     if notifiers:
         logger.info("[%s] Notifiers enabled: %s", account.username, ", ".join(hub.enabled_names))
     else:
-        logger.info("[%s] 无通知渠道（设置该账户的 NOTIFY_*_<n> 以启用）", account.username)
+        logger.info(
+            "[%s] 无通知渠道：可在该账户 [account.notify] 填 smtp_to/telegram/feishu，"
+            "或用 env NOTIFY_SMTP_TO_<n> / NOTIFY_TELEGRAM_* / NOTIFY_FEISHU_TOKEN_*"
+            "（<n>=账户序号）；SMTP 还需配 [smtp] 服务器或 NOTIFY_SMTP_HOST 等",
+            account.username,
+        )
     return hub
