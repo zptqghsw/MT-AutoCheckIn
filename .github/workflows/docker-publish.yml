@@ -18,7 +18,7 @@ on:
       - "v*"
 
 env:
-  IMAGE_REPO: knowswlf/mteam-cli
+  IMAGE_REPO: zptqghsw/mteam-cli
   # Opt into Node.js 24 runtime ahead of the June 2026 default switch.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
