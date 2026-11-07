@@ -58,6 +58,8 @@ class DailyScheduler:
         if armed == 0:
             self.logger.error("没有可保活账户，调度器空转。请在 config.toml 的 [[account]] 填 username + password + totp_secret。")
 
+        self._login_at_startup()
+
         schedule.every(self.settings.schedule_heartbeat_hours).hours.do(self._heartbeat)
         self._heartbeat()
 
@@ -67,6 +69,23 @@ class DailyScheduler:
                 time.sleep(60)
         except KeyboardInterrupt:
             self.logger.info("调度器被 SIGINT/SIGTERM 终止")
+
+    def _login_at_startup(self) -> None:
+        """服务启动即做一次保活登录（不等每日窗口）。
+
+        复用 tick_factory —— ``run_one_account_tick`` 成功/失败都会按账户
+        自己的通知渠道发 CHECKIN_DONE / CHECKIN_FAILED，因此登录不成功即
+        刻收到告警。逐账户串行、不抖动；单账户异常不影响其他账户与主循环。
+        """
+        for acct in self.settings.accounts:
+            if not acct.can_keepalive:
+                continue
+            self.logger.info("[%s] 启动即登录（立即保活）", acct.username)
+            try:
+                exit_code = asyncio.run(self.tick_factory(acct))
+                self.logger.info("[%s] 启动登录完成: exit=%s", acct.username, exit_code)
+            except Exception:  # noqa: BLE001 — startup login must not kill the loop
+                self.logger.exception("[%s] 启动登录抛出异常；继续调度", acct.username)
 
     def _make_job(self, account: Account) -> Callable[[], None]:
         def job() -> None:
