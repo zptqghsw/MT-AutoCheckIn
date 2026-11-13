@@ -61,7 +61,10 @@ class NotifierHub:
             await notifier.send(n)
             return True
         except Exception as exc:
-            self._logger.warning(
-                "Notifier %s failed for %s: %s", notifier.name, n.event.value, exc
+            self._logger.error(
+                "⚠️ 通知渠道 %s 发送失败（%s）：%s —— 请检查该渠道配置与出网连通性"
+                "（SMTP 常见原因：host/port/授权码错误、网络封 SMTP 端口、服务商拒发）",
+                notifier.name, n.event.value, exc,
+                exc_info=True,
             )
             return False
